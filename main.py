@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 # CONFIG: à personnaliser via variables d'environnement sur Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")           # obligatoire
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))  # ton id Telegram (entier)
-CHANNEL_ID = os.getenv("CHANNEL_ID", "")     # ex "@mon_canal" ou "-1001234567890"
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6357925694"))  # ton id Telegram (entier)
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002845193051")     # ex "@mon_canal" ou "-1001234567890"
 
 BUTTON_LABEL = "🎫 Entrer mon ID 1xBet"
 
