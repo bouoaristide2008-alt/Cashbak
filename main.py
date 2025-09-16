@@ -23,7 +23,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ Bot MonCacheBar est en ligne !"
+    return "✅ Bot MonCashbak est en ligne !"
 
 def run_flask():
     app.run(host="0.0.0.0", port=10000)
