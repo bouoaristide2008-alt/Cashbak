@@ -1,10 +1,8 @@
 import json
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
-from aiogram import F
-import asyncio
-import os
 
 # === CONFIG ===
 BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
@@ -17,7 +15,7 @@ dp = Dispatcher()
 
 DATA_FILE = "data.json"
 
-# Charger ou créer le fichier JSON
+# === FONCTIONS DE GESTION DES DONNÉES ===
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {"users": {}, "pending": {}, "counter": 0}
@@ -30,37 +28,49 @@ def save_data(data):
 
 data = load_data()
 
-# === COMMANDES UTILISATEUR ===
-
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
+# === MENU PRINCIPAL UTILISATEUR ===
+def get_user_menu():
     kb = ReplyKeyboardBuilder()
     kb.button(text="Contacter Support")
-    kb.button(text="MonCacheBar")
-    await message.answer(
-        f"👋 Bienvenue sur *MonCacheBar* !\n\n"
-        "🔥 Ici, tu peux recevoir *15% de tes pertes* en cashback chaque semaine sur :\n"
-        "- 1xBet\n- Melbet\n- Betwinner\n\n"
-        "⚡ Condition : inscrit avec le code promo *BCAF*\n\n"
-        "👉 Pour commencer, tape la commande /stars",
-        parse_mode="Markdown",
-        reply_markup=kb.as_markup(resize_keyboard=True)
-    )
+    kb.button(text="MonCashbak")
+    return kb.as_markup(resize_keyboard=True)
 
-@dp.message(F.text == "Contacter Support")
+# === MENU ADMIN ===
+def get_admin_menu():
+    kb = ReplyKeyboardBuilder()
+    kb.button(text="Voir demandes")
+    kb.button(text="Ajouter cashback")
+    return kb.as_markup(resize_keyboard=True)
+
+# === COMMANDES ===
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("👑 Menu Admin", reply_markup=get_admin_menu())
+    else:
+        await message.answer(
+            f"👋 Bienvenue sur *MonCashbak* !\n\n"
+            "🔥 Cashback 15% sur tes pertes avec le code promo *BCAF* :\n"
+            "- 1xBet\n- Melbet\n- Betwinner\n\n"
+            "👉 Pour commencer, tape /stars",
+            parse_mode="Markdown",
+            reply_markup=get_user_menu()
+        )
+
+# === SUPPORT ===
+@dp.message(lambda m: m.text == "Contacter Support")
 async def support_cmd(message: types.Message):
-    # Envoie uniquement à l'admin
     await bot.send_message(
         ADMIN_ID,
         f"🆘 Support demandé par @{message.from_user.username or message.from_user.full_name} (UserID: {message.from_user.id})"
     )
-    # Retour utilisateur
     await message.answer(
         f"✅ Votre demande de support a été envoyée.\n"
         f"Rejoins le canal officiel pour assistance : [Clique ici]({CANAL_LIEN})",
         parse_mode="Markdown"
     )
 
+# === CHOIX BOOKMAKER ===
 @dp.message(Command("stars"))
 async def stars_cmd(message: types.Message):
     kb = ReplyKeyboardBuilder()
@@ -69,12 +79,12 @@ async def stars_cmd(message: types.Message):
     kb.button(text="Betwinner")
     await message.answer("📌 Choisis ton bookmaker :", reply_markup=kb.as_markup(resize_keyboard=True))
 
-@dp.message(F.text.in_(["1xBet", "Melbet", "Betwinner"]))
+@dp.message(lambda m: m.text in ["1xBet", "Melbet", "Betwinner"])
 async def bookmaker_choice(message: types.Message):
     user_id = str(message.from_user.id)
     data["counter"] += 1
-    demande_num = data["counter"]
-    data["pending"][str(demande_num)] = {
+    demande_num = str(data["counter"])
+    data["pending"][demande_num] = {
         "user_id": user_id,
         "bookmaker": message.text,
         "status": "attente_id"
@@ -82,7 +92,8 @@ async def bookmaker_choice(message: types.Message):
     save_data(data)
     await message.answer(f"Merci ✅\nVotre demande numéro *{demande_num}* est créée.\nMaintenant, entre ton *ID joueur* :", parse_mode="Markdown")
 
-@dp.message(F.text.regexp(r"^\d+$"))
+# === ENTRÉE ID JOUEUR ===
+@dp.message(lambda m: m.text.isdigit())
 async def id_joueur(message: types.Message):
     user_id = str(message.from_user.id)
     demandes_utilisateur = [num for num, info in data["pending"].items()
@@ -96,7 +107,7 @@ async def id_joueur(message: types.Message):
 
     info = data["pending"][demande_num]
 
-    # 🔹 Récapitulatif pour l'utilisateur avec lien canal
+    # 🔹 Récapitulatif utilisateur avec lien canal
     user_recap = (
         f"🎯 Nouvelle demande #{demande_num}\n"
         f"Bookmaker : {info['bookmaker']}\n"
@@ -108,7 +119,7 @@ async def id_joueur(message: types.Message):
     )
     await message.answer(user_recap, parse_mode="Markdown")
 
-    # 🔹 Récapitulatif uniquement pour l'admin en PV
+    # 🔹 Récapitulatif admin en PV
     admin_recap = (
         f"🎯 Nouvelle demande #{demande_num}\n"
         f"Bookmaker : {info['bookmaker']}\n"
@@ -119,8 +130,7 @@ async def id_joueur(message: types.Message):
     )
     await bot.send_message(ADMIN_ID, admin_recap)
 
-# === COMMANDES ADMIN ===
-
+# === VALIDATION PAR ADMIN ===
 @dp.message(Command("accepter"))
 async def accepter_cmd(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -150,12 +160,16 @@ async def accepter_cmd(message: types.Message):
     await bot.send_message(
         int(uid),
         f"✅ Votre compte a été validé !\n"
-        f"Votre code *MonCacheBar* est : `{code}`\n\n"
+        f"Votre code *moncashback* est : `{code}`\n\n"
         f"👉 Utilisez le bouton 'MonCacheBar' pour consulter vos gains.",
         parse_mode="Markdown"
     )
-    await message.reply(f"Demande #{demande_num} validée avec le code {code}")
 
+    # Message admin et réaffichage menu
+    await message.reply(f"Demande #{demande_num} validée avec le code {code}")
+    await message.answer("👑 Menu Admin", reply_markup=get_admin_menu())
+
+# === AJOUT CASHBACK PAR ADMIN ===
 @dp.message(Command("ajouter"))
 async def ajouter_cmd(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -171,29 +185,26 @@ async def ajouter_cmd(message: types.Message):
         data["users"][code]["solde"] += montant
         save_data(data)
         uid = int(data["users"][code]["user_id"])
-        await bot.send_message(uid, f"💰 Nouveau cashback ajouté : {montant} FCFA\n"
-                                    f"Solde total : {data['users'][code]['solde']} FCFA")
+        await bot.send_message(uid, f"💰 Nouveau cashback ajouté : {montant} FCFA\nSolde total : {data['users'][code]['solde']} FCFA")
         await message.reply(f"✅ Ajouté {montant} FCFA au code {code}")
     else:
         await message.reply("❌ Code introuvable.")
 
 # === MONCACHEBAR ===
-
-@dp.message(Command("moncachebar"))
+@dp.message(lambda m: m.text == "cashback")
 async def moncachebar_cmd(message: types.Message):
-    await message.answer("🔑 Entrez votre code MonCacheBar (4 chiffres).")
+    await message.answer("🔑 Entrez votre code cashback a 4 chiffres).")
 
-@dp.message(F.text.regexp(r"^\d{4}$"))
+@dp.message(lambda m: m.text.isdigit() and len(m.text) == 4)
 async def check_code(message: types.Message):
     code = message.text
     if code in data["users"]:
         solde = data["users"][code]["solde"]
-        await message.answer(f"💰 Solde MonCacheBar : {solde} FCFA")
+        await message.answer(f"💰 Solde Mon cashback : {solde} FCFA")
     else:
         await message.answer("❌ Code invalide ou non encore validé.")
 
-# === MAIN ===
-
+# === DÉMARRAGE ===
 async def main():
     await dp.start_polling(bot)
 
