@@ -1,5 +1,8 @@
 import json
 import os
+import asyncio
+import threading
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
@@ -14,6 +17,16 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 DATA_FILE = "data.json"
+
+# === FLASK SERVER (Render + UptimeRobot) ===
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "✅ Bot MonCacheBar est en ligne et fonctionne !"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=10000)
 
 # === FONCTIONS DE GESTION DES DONNÉES ===
 def load_data():
@@ -32,7 +45,7 @@ data = load_data()
 def get_user_menu():
     kb = ReplyKeyboardBuilder()
     kb.button(text="Contacter Support")
-    kb.button(text="MonCashbak")
+    kb.button(text="MonCacheBar")
     return kb.as_markup(resize_keyboard=True)
 
 # === MENU ADMIN ===
@@ -49,7 +62,7 @@ async def start_cmd(message: types.Message):
         await message.answer("👑 Menu Admin", reply_markup=get_admin_menu())
     else:
         await message.answer(
-            f"👋 Bienvenue sur *MonCashbak* !\n\n"
+            f"👋 Bienvenue sur *MonCacheBar* !\n\n"
             "🔥 Cashback 15% sur tes pertes avec le code promo *BCAF* :\n"
             "- 1xBet\n- Melbet\n- Betwinner\n\n"
             "👉 Pour commencer, tape /stars",
@@ -160,7 +173,7 @@ async def accepter_cmd(message: types.Message):
     await bot.send_message(
         int(uid),
         f"✅ Votre compte a été validé !\n"
-        f"Votre code *moncashback* est : `{code}`\n\n"
+        f"Votre code *MonCacheBar* est : `{code}`\n\n"
         f"👉 Utilisez le bouton 'MonCacheBar' pour consulter vos gains.",
         parse_mode="Markdown"
     )
@@ -191,23 +204,25 @@ async def ajouter_cmd(message: types.Message):
         await message.reply("❌ Code introuvable.")
 
 # === MONCACHEBAR ===
-@dp.message(lambda m: m.text == "cashback")
+@dp.message(lambda m: m.text == "MonCacheBar")
 async def moncachebar_cmd(message: types.Message):
-    await message.answer("🔑 Entrez votre code cashback a 4 chiffres).")
+    await message.answer("🔑 Entrez votre code MonCacheBar (4 chiffres).")
 
 @dp.message(lambda m: m.text.isdigit() and len(m.text) == 4)
 async def check_code(message: types.Message):
     code = message.text
     if code in data["users"]:
         solde = data["users"][code]["solde"]
-        await message.answer(f"💰 Solde Mon cashback : {solde} FCFA")
+        await message.answer(f"💰 Solde MonCacheBar : {solde} FCFA")
     else:
         await message.answer("❌ Code invalide ou non encore validé.")
 
-# === DÉMARRAGE ===
+# === DÉMARRAGE BOT + FLASK ===
 async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    # Lancer Flask en arrière-plan
+    threading.Thread(target=run_flask).start()
+    # Lancer le bot
+    asyncio.run(main()) 
