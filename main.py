@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-import threading
+from threading import Thread
 from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -10,7 +10,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 # === CONFIG ===
 BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
 ADMIN_ID = 6357925694
-CANAL_LIEN = "https://t.me/kingpronosbs"  # Remplace par ton canal pour les utilisateurs
+CANAL_LIEN = "https://t.me/kingpronosbs"
 
 # === INITIALISATION ===
 bot = Bot(token=BOT_TOKEN)
@@ -18,15 +18,19 @@ dp = Dispatcher()
 
 DATA_FILE = "data.json"
 
-# === FLASK SERVER (Render + UptimeRobot) ===
+# === FLASK KEEP-ALIVE ===
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ Bot MonCacheBar est en ligne et fonctionne !"
+    return "✅ Bot MonCacheBar est en ligne !"
 
 def run_flask():
     app.run(host="0.0.0.0", port=10000)
+
+async def start_flask():
+    Thread(target=run_flask).start()
+    await asyncio.sleep(1)  # Laisser Flask démarrer
 
 # === FONCTIONS DE GESTION DES DONNÉES ===
 def load_data():
@@ -41,18 +45,18 @@ def save_data(data):
 
 data = load_data()
 
-# === MENU PRINCIPAL UTILISATEUR ===
+# === MENUS ===
 def get_user_menu():
     kb = ReplyKeyboardBuilder()
     kb.button(text="Contacter Support")
-    kb.button(text="MonCacheBar")
+    kb.button(text="MonCashbak")
     return kb.as_markup(resize_keyboard=True)
 
-# === MENU ADMIN ===
 def get_admin_menu():
     kb = ReplyKeyboardBuilder()
     kb.button(text="Voir demandes")
     kb.button(text="Ajouter cashback")
+    kb.button(text="Accepter demande")
     return kb.as_markup(resize_keyboard=True)
 
 # === COMMANDES ===
@@ -178,7 +182,6 @@ async def accepter_cmd(message: types.Message):
         parse_mode="Markdown"
     )
 
-    # Message admin et réaffichage menu
     await message.reply(f"Demande #{demande_num} validée avec le code {code}")
     await message.answer("👑 Menu Admin", reply_markup=get_admin_menu())
 
@@ -217,12 +220,21 @@ async def check_code(message: types.Message):
     else:
         await message.answer("❌ Code invalide ou non encore validé.")
 
+# === SET COMMANDES TELEGRAM VISIBLE ===
+async def set_commands():
+    commands = [
+        types.BotCommand(command="start", description="Démarrer le bot"),
+        types.BotCommand(command="accepter", description="Accepter une demande (admin)"),
+        types.BotCommand(command="ajouter", description="Ajouter cashback (admin)"),
+        types.BotCommand(command="stars", description="Choisir votre bookmaker")
+    ]
+    await bot.set_my_commands(commands)
+
 # === DÉMARRAGE BOT + FLASK ===
 async def main():
-    await dp.start_polling(bot)
+    await set_commands()   # Déclarer commandes Telegram
+    await start_flask()    # Lancer Flask
+    await dp.start_polling(bot)  # Lancer bot Telegram
 
 if __name__ == "__main__":
-    # Lancer Flask en arrière-plan
-    threading.Thread(target=run_flask).start()
-    # Lancer le bot
-    asyncio.run(main()) 
+    asyncio.run(main())
