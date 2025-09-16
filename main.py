@@ -9,7 +9,7 @@ import os
 # === CONFIG ===
 BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
 ADMIN_ID = 6357925694
-CANAL_LIEN = "https://t.me/TON_CANAL_ICI"  # Remplace par ton canal pour les utilisateurs
+CANAL_LIEN = "https://t.me/kingpronosbs"  # Remplace par ton canal pour les utilisateurs
 
 # === INITIALISATION ===
 bot = Bot(token=BOT_TOKEN)
