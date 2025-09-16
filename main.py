@@ -1,229 +1,182 @@
-#         return
-# bot_persistent.py
 import json
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram import F
+import asyncio
 import os
-import re
-import time
-import logging
-from telegram import ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# === CONFIG ===
+BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"  # Remplace par le token de ton bot
+ADMIN_ID = 6357925694          # Ton ID Telegram
+CHANNEL_ID = -1002845193051 # Chat ID de ton canal Telegram
 
-# ---------- CONFIG (via variables d'environnement sur Render) ----------
-BOT_TOKEN = os.getenv("BOT_TOKEN")                    # token BotFather (obligatoire)
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))           # ton Telegram ID (entier)
-CHANNEL_ID = os.getenv("CHANNEL_ID", "")             # ex: "@MonCanal" ou "-1001234567890"
-PROMO_CODE = os.getenv("PROMO_CODE", "BCAF")         # ton code promo (facultatif)
-PROMO_LINK = os.getenv("PROMO_LINK", "https://ton-lien-1xbet.com")  # lien procédure
+# === INITIALISATION ===
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-BUTTON_LABEL = "🎫 Entrer mon ID 1xBet"
-CHECK_DELAY = 5 * 60 * 60  # 5 heures en secondes
+DATA_FILE = "data.json"
 
-# ---------- utilitaires ----------
-def load_json_file(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-    except Exception as e:
-        logger.exception(f"Erreur lecture {path}: {e}")
-        return {}
+# Charger ou créer le fichier JSON
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {"users": {}, "pending": {}, "counter": 0}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-def save_json_file(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-def load_users():
-    return load_json_file("users.json")        # IDs validés (admin les ajoute)
+data = load_data()
 
-def load_players():
-    return load_json_file("players.json")      # enregistrements automatiques
+# === COMMANDES UTILISATEUR ===
 
-def save_players(players):
-    save_json_file("players.json", players)
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
+    text = (
+        "👋 Bienvenue sur *MonCacheBar* !\n\n"
+        "🔥 Ici, tu peux recevoir *15% de tes pertes* en cashback chaque semaine "
+        "sur les bookmakers suivants :\n"
+        "- 1xBet\n- Melbet\n- Betwinner\n\n"
+        "⚡ Condition : tu dois être inscrit avec le code promo : *BCAF*\n\n"
+        "👉 Pour commencer, tape la commande /stars"
+    )
+    await message.answer(text, parse_mode="Markdown")
 
-def extract_first_digits(text):
-    if not text:
-        return None
-    m = re.search(r"(\d+)", text)
-    return m.group(1) if m else None
+@dp.message(Command("stars"))
+async def stars_cmd(message: types.Message):
+    kb = ReplyKeyboardBuilder()
+    kb.button(text="1xBet")
+    kb.button(text="Melbet")
+    kb.button(text="Betwinner")
+    await message.answer("📌 Choisis ton bookmaker :", reply_markup=kb.as_markup(resize_keyboard=True))
 
-# ---------- scheduling & vérification ----------
-def schedule_check(app, telegram_id, bet_id, delay=CHECK_DELAY):
-    """
-    Persiste la demande dans players.json puis schedule le job via job_queue.
-    """
-    players = load_players()
-    now = int(time.time())
-    players[str(telegram_id)] = {
-        "username": players.get(str(telegram_id), {}).get("username"),
-        "bet_id": bet_id,
-        "status": "pending",
-        "scheduled_at": now
+@dp.message(F.text.in_(["1xBet", "Melbet", "Betwinner"]))
+async def bookmaker_choice(message: types.Message):
+    user_id = str(message.from_user.id)
+    # Crée une nouvelle demande avec un numéro unique
+    data["counter"] += 1
+    demande_num = data["counter"]
+    data["pending"][str(demande_num)] = {
+        "user_id": user_id,
+        "bookmaker": message.text
     }
-    save_players(players)
+    save_data(data)
+    await message.answer(f"Merci ✅\nVotre demande numéro *{demande_num}* est créée.\nMaintenant, entre ton *ID joueur* :", parse_mode="Markdown")
+    # Stocke le numéro de demande dans l'objet user pour suivi
+    data["pending"][str(demande_num)]["status"] = "attente_id"
 
+@dp.message(F.text.regexp(r"^\d+$"))
+async def id_joueur(message: types.Message):
+    user_id = str(message.from_user.id)
+    # Cherche toutes les demandes en attente pour cet utilisateur
+    demandes_utilisateur = [num for num, info in data["pending"].items()
+                            if info["user_id"] == user_id and info.get("status") == "attente_id"]
+    if not demandes_utilisateur:
+        return  # Pas de demande en attente
+    # On prend la dernière demande
+    demande_num = demandes_utilisateur[-1]
+    data["pending"][demande_num]["id_joueur"] = message.text
+    data["pending"][demande_num]["status"] = "en_attente_validation"
+    save_data(data)
+
+    info = data["pending"][demande_num]
+    admin_msg = (
+        f"🎯 Nouvelle demande #{demande_num}\n"
+        f"Bookmaker : {info['bookmaker']}\n"
+        f"ID joueur : {info['id_joueur']}\n"
+        f"Nom : {message.from_user.full_name}\n"
+        f"Pseudo : @{message.from_user.username or 'aucun'}\n"
+        f"UserID : {user_id}"
+    )
+
+    # Message privé à l'admin
+    await bot.send_message(ADMIN_ID, admin_msg)
+    # Message dans le canal Telegram
+    await bot.send_message(CHANNEL_ID, admin_msg)
+
+    await message.answer(f"✅ Votre demande #{demande_num} est maintenant en attente de validation.")
+
+# === COMMANDES ADMIN ===
+
+@dp.message(Command("accepter"))
+async def accepter_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
     try:
-        app.job_queue.run_once(check_after_delay, when=delay, data={"telegram_id": telegram_id, "bet_id": bet_id})
-        logger.info(f"Job scheduled for {telegram_id} in {delay}s (bet_id={bet_id})")
-    except Exception as e:
-        logger.exception(f"Erreur scheduling job: {e}")
+        _, demande_num, code = message.text.split()
+    except:
+        await message.reply("Usage: /accepter <num_demande> <code à 4 chiffres>")
+        return
+    if demande_num not in data["pending"]:
+        await message.reply("❌ Demande introuvable.")
+        return
+    info = data["pending"][demande_num]
+    uid = info["user_id"]
 
-async def check_after_delay(context: ContextTypes.DEFAULT_TYPE):
-    """Exécuté par job_queue après délai; notifie l'utilisateur selon users.json"""
-    job_data = context.job.data
-    telegram_id = job_data["telegram_id"]
-    bet_id = job_data["bet_id"]
+    # Ajouter l'utilisateur validé avec le code fourni par l'admin
+    data["users"][code] = {
+        "user_id": uid,
+        "pseudo": f"@{message.from_user.username}" if message.from_user.username else "",
+        "bookmaker": info["bookmaker"],
+        "id_joueur": info["id_joueur"],
+        "solde": 0,
+        "valide": True
+    }
+    del data["pending"][demande_num]
+    save_data(data)
 
-    users = load_users()
-    players = load_players()
-    player = players.get(str(telegram_id), {})
+    # Envoyer confirmation au joueur
+    await bot.send_message(
+        int(uid),
+        f"✅ Votre compte a été validé !\n"
+        f"Votre code *MonCacheBar* est : `{code}`\n\n"
+        f"👉 Utilisez le bouton 'MonCacheBar' pour consulter vos gains.",
+        parse_mode="Markdown"
+    )
+    await message.reply(f"Demande #{demande_num} validée avec le code {code}")
 
-    # Marquer checked et sauvegarder
-    player["status"] = "checked"
-    player["checked_at"] = int(time.time())
-    players[str(telegram_id)] = player
-    save_players(players)
+@dp.message(Command("ajouter"))
+async def ajouter_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        _, code, montant = message.text.split()
+        montant = int(montant)
+    except:
+        await message.reply("Usage: /ajouter <code> <montant>")
+        return
 
-    if bet_id not in users:
-        # message final si pas validé
-        try:
-            text = (
-                f"❌ Votre compte n’a pas été créé avec le code promo {PROMO_CODE}.\n"
-                f"Veuillez créer un nouveau compte 1xBet avec le code promo *{PROMO_CODE}* et réessayer.\n\n"
-                f"👉 <a href=\"{PROMO_LINK}\">Cliquez ici pour suivre la procédure</a>"
-            )
-            await context.bot.send_message(chat_id=telegram_id, text=text, parse_mode="HTML")
-        except Exception as e:
-            logger.warning(f"Erreur envoi message retardé à {telegram_id}: {e}")
+    if code in data["users"]:
+        data["users"][code]["solde"] += montant
+        save_data(data)
+        uid = int(data["users"][code]["user_id"])
+        await bot.send_message(uid, f"💰 Nouveau cashback ajouté : {montant} FCFA\n"
+                                    f"Solde total : {data['users'][code]['solde']} FCFA")
+        await message.reply(f"✅ Ajouté {montant} FCFA au code {code}")
     else:
-        # si validé
-        try:
-            await context.bot.send_message(chat_id=telegram_id, text=f"🎉 Votre compte est validé avec le code promo {PROMO_CODE}. Vous recevrez vos remboursements chaque semaine.")
-        except Exception as e:
-            logger.warning(f"Erreur envoi message validé à {telegram_id}: {e}")
+        await message.reply("❌ Code introuvable.")
 
-# ---------- handlers ----------
-async def start(update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [[KeyboardButton(BUTTON_LABEL)]]
-    reply_markup = ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text("👋 Bienvenue !\n\nClique sur le bouton ci-dessous pour inscrire ton ID 1xBet.", reply_markup=reply_markup)
+# === MONCACHEBAR ===
 
-async def handle_message(update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip()
-    users = load_users()
-    user = update.effective_user
-    tg_username = user.username if user.username else f"id:{user.id}"
+@dp.message(Command("moncachebar"))
+async def moncachebar_cmd(message: types.Message):
+    await message.answer("🔑 Entrez votre code MonCacheBar (4 chiffres).")
 
-    # clic sur bouton
-    if text == BUTTON_LABEL:
-        context.user_data["awaiting_id"] = True
-        await update.message.reply_text("➡️ Envoie maintenant uniquement ton ID 1xBet (numérique).")
-        return
+@dp.message(F.text.regexp(r"^\d{4}$"))
+async def check_code(message: types.Message):
+    code = message.text
+    if code in data["users"]:
+        solde = data["users"][code]["solde"]
+        await message.answer(f"💰 Solde MonCacheBar : {solde} FCFA")
+    else:
+        await message.answer("❌ Code invalide ou non encore validé.")
 
-    # Si en attente d'ID (après clic)
-    if context.user_data.get("awaiting_id"):
-        id_extrait = extract_first_digits(text)
-        if not id_extrait:
-            await update.message.reply_text("❌ Envoie uniquement ton ID 1xBet (ex: 11638822).")
-            return
+# === MAIN ===
 
-        # enregistrer dans players.json (avec statut pending)
-        players = load_players()
-        players[str(user.id)] = {"username": tg_username, "bet_id": id_extrait, "status": "pending", "scheduled_at": int(time.time())}
-        save_players(players)
-
-        # envoyer au canal admin si configuré
-        channel_env = os.getenv("CHANNEL_ID") or CHANNEL_ID
-        if channel_env:
-            try:
-                chat_id_to_send = int(channel_env) if re.match(r"^-?\d+$", str(channel_env)) else channel_env
-                await context.bot.send_message(chat_id=chat_id_to_send, text=f"📥 Nouvel ID reçu :\n👤 @{tg_username}\n🆔 Telegram: {user.id}\n🎫 ID 1xBet: {id_extrait}")
-            except Exception as e:
-                logger.warning(f"Impossible d'envoyer au canal: {e}")
-        else:
-            logger.info("CHANNEL_ID non configuré; saut de l'envoi au canal.")
-
-        await update.message.reply_text("⏳ Veuillez patienter 5h, nous vérifions votre compte...")
-        # planifier la vérification (persistée et programmée)
-        schedule_check(context.application, user.id, id_extrait)
-        context.user_data["awaiting_id"] = False
-        return
-
-    # si envoie directement un ID sans cliquer le bouton
-    id_direct = extract_first_digits(text)
-    if id_direct:
-        players = load_players()
-        players[str(user.id)] = {"username": tg_username, "bet_id": id_direct, "status": "pending", "scheduled_at": int(time.time())}
-        save_players(players)
-        await update.message.reply_text("⏳ Veuillez patienter 5h, nous vérifions votre compte...")
-        schedule_check(context.application, user.id, id_direct)
-        return
-
-    await update.message.reply_text("⚠️ Envoie ton ID 1xBet (numérique) ou clique sur le bouton.")
-
-# commande admin broadcast
-async def broadcast(update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("🚫 Tu n’as pas l’autorisation.")
-        return
-    if not context.args:
-        await update.message.reply_text("⚠️ Utilisation : /broadcast Ton message ici")
-        return
-    message = " ".join(context.args)
-    players = load_players()
-    sent = 0
-    for tid_str in players.keys():
-        try:
-            await context.bot.send_message(chat_id=int(tid_str), text=message)
-            sent += 1
-        except Exception as e:
-            logger.warning(f"Erreur envoi {tid_str}: {e}")
-    await update.message.reply_text(f"✅ Message envoyé à {sent} joueurs.")
-
-# ---------- reprise des checks pendants au démarrage ----------
-def resume_pending_checks(app):
-    players = load_players()
-    now = int(time.time())
-    for tid_str, info in players.items():
-        if info.get("status") == "pending" and info.get("scheduled_at"):
-            scheduled_at = int(info["scheduled_at"])
-            elapsed = now - scheduled_at
-            remaining = CHECK_DELAY - elapsed
-            try:
-                if remaining <= 0:
-                    app.job_queue.run_once(check_after_delay, when=0, data={"telegram_id": int(tid_str), "bet_id": info.get("bet_id")})
-                else:
-                    app.job_queue.run_once(check_after_delay, when=remaining, data={"telegram_id": int(tid_str), "bet_id": info.get("bet_id")})
-                logger.info(f"Resume job for {tid_str}, remaining={remaining}s")
-            except Exception as e:
-                logger.exception(f"Erreur scheduling resume for {tid_str}: {e}")
-
-# ---------- main ----------
-def main():
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN manquant. Défini la variable d'environnement BOT_TOKEN.")
-        return
-
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-
-    # Reprendre les jobs pendants avant run_polling
-    resume_pending_checks(app)
-
-    logger.info("Bot démarré.")
-    app.run_polling()
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
