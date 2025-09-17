@@ -1,7 +1,6 @@
 import sqlite3
 import random
 import string
-import os
 from threading import Lock
 from flask import Flask, request
 import telebot
@@ -67,25 +66,59 @@ def start(message):
 
 # ================== CALLBACK HANDLER ==================
 @bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    if call.data.startswith("bookmaker_"):
-        bookmaker = call.data.split("_")[1]
-        bot.send_message(call.message.chat.id, f"📌 Entrez votre ID {bookmaker} :")
-        bot.register_next_step_handler(call.message, save_demande, call.from_user.id, bookmaker)
+def callback_handler(call):
+    try:
+        # ===== BOOKMAKER =====
+        if call.data.startswith("bookmaker_"):
+            bookmaker = call.data.split("_")[1]
+            bot.send_message(call.message.chat.id, f"📌 Entrez votre ID {bookmaker} :")
+            bot.register_next_step_handler(call.message, save_demande, call.from_user.id, bookmaker)
 
-    elif call.data == "cashback":
-        show_cashback(call.message)
+        # ===== CASHBACK =====
+        elif call.data == "cashback":
+            show_cashback(call.message)
 
-    elif call.data == "support":
-        bot.send_message(call.message.chat.id, f"🆘 Contacte l'admin en PV : @{bot.get_me().username}")
+        # ===== SUPPORT =====
+        elif call.data == "support":
+            bot.send_message(call.message.chat.id, f"🆘 Contacte l'admin en PV : @{bot.get_me().username}")
 
-    elif call.data == "aide":
-        bot.send_message(call.message.chat.id,
-                         "❓ Pour réclamer votre cashback :\n"
-                         "1. Choisissez votre bookmaker\n"
-                         "2. Saisissez votre ID\n"
-                         "3. Attendez l'acceptation de l'admin\n"
-                         "4. Recevez votre code cashback")
+        # ===== AIDE =====
+        elif call.data == "aide":
+            bot.send_message(call.message.chat.id,
+                             "❓ Pour réclamer votre cashback :\n"
+                             "1. Choisissez votre bookmaker\n"
+                             "2. Saisissez votre ID\n"
+                             "3. Attendez l'acceptation de l'admin\n"
+                             "4. Recevez votre code cashback")
+
+        # ===== ADMIN ACCEPT/REJECT =====
+        elif call.data.startswith("accepter_") or call.data.startswith("rejeter_"):
+            if call.from_user.id not in ADMIN_IDS:
+                return
+            demande_id = int(call.data.split("_")[1])
+            if call.data.startswith("accepter_"):
+                code_cash = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                with db_lock:
+                    c.execute("UPDATE demandes SET statut='Acceptée', code_cashback=? WHERE id=?", (code_cash, demande_id))
+                    conn.commit()
+                    c.execute("SELECT user_id, username FROM demandes WHERE id=?", (demande_id,))
+                    row = c.fetchone()
+                if row:
+                    user_id, username = row
+                    bot.send_message(user_id, f"✅ Votre demande a été acceptée !\nVotre code cashback : {code_cash}")
+                bot.edit_message_text("✅ Demande acceptée", call.message.chat.id, call.message.message_id)
+            else:
+                with db_lock:
+                    c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
+                    conn.commit()
+                    c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
+                    row = c.fetchone()
+                if row:
+                    bot.send_message(row[0], "❌ Votre demande a été rejetée.")
+                bot.edit_message_text("❌ Demande rejetée", call.message.chat.id, call.message.message_id)
+
+    except Exception as e:
+        print(f"Erreur callback: {e}")
 
 # ================== SAVE DEMANDE ==================
 def save_demande(message, user_id, bookmaker):
@@ -125,34 +158,6 @@ def show_cashback(message):
         total = sum([r[0] for r in rows])
         bot.send_message(message.chat.id, f"💰 Votre cashback total : {total} CFA")
 
-# ================== ADMIN ACCEPT/REJECT ==================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("accepter_") or call.data.startswith("rejeter_"))
-def admin_accept_reject(call):
-    if call.from_user.id not in ADMIN_IDS:
-        return
-
-    demande_id = int(call.data.split("_")[1])
-    if call.data.startswith("accepter_"):
-        code_cash = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        with db_lock:
-            c.execute("UPDATE demandes SET statut='Acceptée', code_cashback=? WHERE id=?", (code_cash, demande_id))
-            conn.commit()
-            c.execute("SELECT user_id, username FROM demandes WHERE id=?", (demande_id,))
-            row = c.fetchone()
-        if row:
-            user_id, username = row
-            bot.send_message(user_id, f"✅ Votre demande a été acceptée !\nVotre code cashback : {code_cash}")
-        bot.edit_message_text("✅ Demande acceptée", call.message.chat.id, call.message.message_id)
-    else:
-        with db_lock:
-            c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
-            conn.commit()
-            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
-            row = c.fetchone()
-        if row:
-            bot.send_message(row[0], "❌ Votre demande a été rejetée.")
-        bot.edit_message_text("❌ Demande rejetée", call.message.chat.id, call.message.message_id)
-
 # ================== ADMIN AJOUT MONTANT ==================
 @bot.message_handler(commands=['ajouter_montant'])
 def add_montant(message):
@@ -169,7 +174,7 @@ def add_montant(message):
         bot.send_message(message.chat.id, "Usage: /ajouter_montant <id_demande> <montant>")
 
 # ================== WEBHOOK ==================
-@app.route("/webhook", methods=["POST"])
+@app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     try:
         json_str = request.get_data().decode("utf-8")
@@ -188,6 +193,6 @@ def index():
 if __name__ == "__main__":
     bot.remove_webhook()
     SERVICE_URL = "https://cashbak-5.onrender.com"
-    bot.set_webhook(url=f"{SERVICE_URL}/webhook")
+    bot.set_webhook(url=f"{SERVICE_URL}/{TOKEN}")
     PORT = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=PORT)
