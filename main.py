@@ -155,12 +155,20 @@ def rejeter(message):
         bot.send_message(message.chat.id, "Usage: /rejeter <id>")
 
 # === WEBHOOK FLASK ===
-@app.route(f"/{TOKEN}", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
+    try:
+        json_str = request.get_data().decode("utf-8")
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"Erreur webhook: {e}")
     return "", 200
+
+# === PAGE TEST ===
+@app.route("/", methods=["GET"])
+def index():
+    return "✅ Bot Cashback est en ligne !", 200
 
 # === LAUNCH ===
 if __name__ == "__main__":
@@ -168,5 +176,8 @@ if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 5000))
     HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     SERVICE_URL = f"https://{HOSTNAME}"
-    bot.set_webhook(url=f"{SERVICE_URL}/{TOKEN}")
+
+    # On définit le webhook sur /webhook
+    bot.set_webhook(url=f"{SERVICE_URL}/webhook")
+
     app.run(host="0.0.0.0", port=PORT)
