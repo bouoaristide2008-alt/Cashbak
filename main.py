@@ -25,7 +25,7 @@ c.execute("""CREATE TABLE IF NOT EXISTS demandes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
     username TEXT,
-    montant TEXT,
+    montant INTEGER,
     statut TEXT DEFAULT 'En attente'
 )""")
 conn.commit()
@@ -41,14 +41,18 @@ def menu_principal():
 # === START ===
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "👋 Bienvenue sur le bot Cashback !", reply_markup=menu_principal())
+    bot.send_message(
+        message.chat.id,
+        "👋 Bienvenue sur le bot Cashback !\n\nChoisis une option ci-dessous 👇",
+        reply_markup=menu_principal()
+    )
 
 # === CALLBACK ===
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     if call.data == "demande":
-        bot.send_message(call.message.chat.id, "Entrez le montant de votre demande 💵 :")
-        bot.register_next_step_handler(call.message, save_demande)
+        bot.send_message(call.message.chat.id, "Entrez le montant de votre demande 💵 (minimum 200 CFA) :")
+        bot.register_next_step_handler(call.message, save_demande, call.from_user.id)
 
     elif call.data == "mes_demandes":
         with db_lock:
@@ -59,25 +63,63 @@ def callback(call):
         else:
             msg = "📊 Vos demandes :\n\n"
             for r in rows:
-                msg += f"ID: {r[0]} | Montant: {r[1]} | Statut: {r[2]}\n"
+                msg += f"ID: {r[0]} | Montant: {r[1]} CFA | Statut: {r[2]}\n"
             bot.send_message(call.message.chat.id, msg)
 
+    elif call.data.startswith("valider_"):
+        demande_id = int(call.data.split("_")[1])
+        with db_lock:
+            c.execute("UPDATE demandes SET statut='Validée' WHERE id=?", (demande_id,))
+            conn.commit()
+            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
+            row = c.fetchone()
+        if row:
+            bot.send_message(row[0], f"✅ Votre demande {demande_id} a été validée.")
+        bot.edit_message_text("✅ Demande validée.", call.message.chat.id, call.message.message_id)
+
+    elif call.data.startswith("rejeter_"):
+        demande_id = int(call.data.split("_")[1])
+        with db_lock:
+            c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
+            conn.commit()
+            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
+            row = c.fetchone()
+        if row:
+            bot.send_message(row[0], f"❌ Votre demande {demande_id} a été rejetée.")
+        bot.edit_message_text("❌ Demande rejetée.", call.message.chat.id, call.message.message_id)
+
 # === SAVE DEMANDE ===
-def save_demande(message):
-    montant = message.text
+def save_demande(message, expected_user_id):
+    if message.from_user.id != expected_user_id:
+        return  # sécurité
+
+    montant = message.text.strip()
+    if not montant.isdigit() or int(montant) < 200:
+        bot.send_message(message.chat.id, "❌ Montant invalide. Réessaie avec un nombre (minimum 200 CFA) :")
+        bot.register_next_step_handler(message, save_demande, expected_user_id)
+        return
+
+    montant = int(montant)
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
+
     with db_lock:
         c.execute("INSERT INTO demandes (user_id, username, montant) VALUES (?,?,?)",
                   (user_id, username, montant))
+        demande_id = c.lastrowid
         conn.commit()
+
     bot.send_message(message.chat.id, f"✅ Demande enregistrée pour {montant} CFA.\n👉 Rejoins le canal : {CHANNEL_URL}")
 
-    # Notif admin
-    for admin in ADMIN_IDS:
-        bot.send_message(admin, f"📢 Nouvelle demande : @{username} - {montant} CFA")
+    # Notif admin avec boutons
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Valider", callback_data=f"valider_{demande_id}"))
+    markup.add(InlineKeyboardButton("❌ Rejeter", callback_data=f"rejeter_{demande_id}"))
 
-# === ADMIN COMMANDS ===
+    for admin in ADMIN_IDS:
+        bot.send_message(admin, f"📢 Nouvelle demande #{demande_id} : @{username} - {montant} CFA", reply_markup=markup)
+
+# === ADMIN COMMANDS (optionnel en plus des boutons) ===
 @bot.message_handler(commands=['valider'])
 def valider(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -87,6 +129,10 @@ def valider(message):
         with db_lock:
             c.execute("UPDATE demandes SET statut='Validée' WHERE id=?", (demande_id,))
             conn.commit()
+            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
+            row = c.fetchone()
+        if row:
+            bot.send_message(row[0], f"✅ Votre demande {demande_id} a été validée.")
         bot.send_message(message.chat.id, f"✅ Demande {demande_id} validée.")
     except:
         bot.send_message(message.chat.id, "Usage: /valider <id>")
@@ -100,6 +146,10 @@ def rejeter(message):
         with db_lock:
             c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
             conn.commit()
+            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
+            row = c.fetchone()
+        if row:
+            bot.send_message(row[0], f"❌ Votre demande {demande_id} a été rejetée.")
         bot.send_message(message.chat.id, f"❌ Demande {demande_id} rejetée.")
     except:
         bot.send_message(message.chat.id, "Usage: /rejeter <id>")
@@ -116,6 +166,7 @@ def webhook():
 if __name__ == "__main__":
     bot.remove_webhook()
     PORT = int(os.environ.get("PORT", 5000))
-    SERVICE_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}"
+    HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    SERVICE_URL = f"https://{HOSTNAME}"
     bot.set_webhook(url=f"{SERVICE_URL}/{TOKEN}")
     app.run(host="0.0.0.0", port=PORT)
