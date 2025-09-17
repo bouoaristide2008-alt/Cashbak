@@ -1,226 +1,121 @@
-import json
 import os
-import threading
-import asyncio
-from flask import Flask
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+import sqlite3
+from threading import Lock
+from flask import Flask, request
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # === CONFIG ===
-BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
-ADMIN_ID = 6357925694
-CANAL_LIEN = "https://t.me/kingpronosbs"
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("BOT_TOKEN non défini !")
 
-# === INITIALISATION BOT ===
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+ADMIN_IDS = [6357925694]   # ton ID admin
+CHANNEL_URL = "https://t.me/kingpronosbs"  # lien canal obligatoire
 
-DATA_FILE = "data.json"
-
-# === FLASK POUR KEEP-ALIVE ===
+DB_FILE = "cashback.db"
+bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
+db_lock = Lock()
 
-@app.route("/")
-def index():
-    return "Bot MonCacheBar is running!"
+# === DB INIT ===
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+c = conn.cursor()
+c.execute("""CREATE TABLE IF NOT EXISTS demandes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    montant TEXT,
+    statut TEXT DEFAULT 'En attente'
+)""")
+conn.commit()
 
-# === GESTION DES DONNÉES ===
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"users": {}, "pending": {}, "counter": 0}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+# === MENU ===
+def menu_principal():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("💰 Faire une demande", callback_data="demande"))
+    markup.add(InlineKeyboardButton("📊 Mes demandes", callback_data="mes_demandes"))
+    markup.add(InlineKeyboardButton("📢 Rejoindre canal", url=CHANNEL_URL))
+    return markup
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+# === START ===
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, "👋 Bienvenue sur le bot Cashback !", reply_markup=menu_principal())
 
-data = load_data()
+# === CALLBACK ===
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+    if call.data == "demande":
+        bot.send_message(call.message.chat.id, "Entrez le montant de votre demande 💵 :")
+        bot.register_next_step_handler(call.message, save_demande)
 
-# === MENUS ===
-def get_user_menu():
-    kb = ReplyKeyboardBuilder()
-    kb.button(text="Contacter Support")
-    kb.button(text="MonCashbak")
-    return kb.as_markup(resize_keyboard=True)
+    elif call.data == "mes_demandes":
+        with db_lock:
+            c.execute("SELECT id, montant, statut FROM demandes WHERE user_id=?", (call.from_user.id,))
+            rows = c.fetchall()
+        if not rows:
+            bot.send_message(call.message.chat.id, "❌ Vous n’avez aucune demande.")
+        else:
+            msg = "📊 Vos demandes :\n\n"
+            for r in rows:
+                msg += f"ID: {r[0]} | Montant: {r[1]} | Statut: {r[2]}\n"
+            bot.send_message(call.message.chat.id, msg)
 
-def get_admin_menu():
-    kb = ReplyKeyboardBuilder()
-    kb.button(text="Voir demandes")
-    kb.button(text="Ajouter cashback")
-    return kb.as_markup(resize_keyboard=True)
+# === SAVE DEMANDE ===
+def save_demande(message):
+    montant = message.text
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    with db_lock:
+        c.execute("INSERT INTO demandes (user_id, username, montant) VALUES (?,?,?)",
+                  (user_id, username, montant))
+        conn.commit()
+    bot.send_message(message.chat.id, f"✅ Demande enregistrée pour {montant} CFA.\n👉 Rejoins le canal : {CHANNEL_URL}")
 
-# === COMMANDES ===
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 Menu Admin", reply_markup=get_admin_menu())
-    else:
-        await message.answer(
-            f"👋 Bienvenue sur *MonCashbak* !\n\n"
-            "🔥 Cashback 15% sur tes pertes avec le code promo *BCAF* :\n"
-            "- 1xBet\n- Melbet\n- Betwinner\n\n"
-            "👉 Pour commencer, tape /stars",
-            parse_mode="Markdown",
-            reply_markup=get_user_menu()
-        )
+    # Notif admin
+    for admin in ADMIN_IDS:
+        bot.send_message(admin, f"📢 Nouvelle demande : @{username} - {montant} CFA")
 
-# === SUPPORT ===
-@dp.message(lambda m: m.text == "Contacter Support")
-async def support_cmd(message: types.Message):
-    await bot.send_message(
-        ADMIN_ID,
-        f"🆘 Support demandé par @{message.from_user.username or message.from_user.full_name} (UserID: {message.from_user.id})"
-    )
-    await message.answer(
-        f"✅ Votre demande de support a été envoyée.\n"
-        f"Rejoins le canal officiel pour assistance : [Clique ici]({CANAL_LIEN})",
-        parse_mode="Markdown"
-    )
-
-# === CHOIX BOOKMAKER ===
-@dp.message(Command("stars"))
-async def stars_cmd(message: types.Message):
-    kb = ReplyKeyboardBuilder()
-    kb.button(text="1xBet")
-    kb.button(text="Melbet")
-    kb.button(text="Betwinner")
-    await message.answer("📌 Choisis ton bookmaker :", reply_markup=kb.as_markup(resize_keyboard=True))
-
-@dp.message(lambda m: m.text in ["1xBet", "Melbet", "Betwinner"])
-async def bookmaker_choice(message: types.Message):
-    user_id = str(message.from_user.id)
-    data["counter"] += 1
-    demande_num = str(data["counter"])
-    data["pending"][demande_num] = {
-        "user_id": user_id,
-        "bookmaker": message.text,
-        "status": "attente_id"
-    }
-    save_data(data)
-    await message.answer(f"Merci ✅\nVotre demande numéro *{demande_num}* est créée.\nMaintenant, entre ton *ID joueur* :", parse_mode="Markdown")
-
-# === ENTRÉE ID JOUEUR ===
-@dp.message(lambda m: m.text.isdigit())
-async def id_joueur(message: types.Message):
-    user_id = str(message.from_user.id)
-    demandes_utilisateur = [num for num, info in data["pending"].items()
-                            if info["user_id"] == user_id and info.get("status") == "attente_id"]
-    if not demandes_utilisateur:
-        return
-    demande_num = demandes_utilisateur[-1]
-    data["pending"][demande_num]["id_joueur"] = message.text
-    data["pending"][demande_num]["status"] = "en_attente_validation"
-    save_data(data)
-
-    info = data["pending"][demande_num]
-
-    # 🔹 Récapitulatif utilisateur avec lien canal
-    user_recap = (
-        f"🎯 Nouvelle demande #{demande_num}\n"
-        f"Bookmaker : {info['bookmaker']}\n"
-        f"ID joueur : {info['id_joueur']}\n"
-        f"Nom : {message.from_user.full_name}\n"
-        f"Pseudo : @{message.from_user.username or 'aucun'}\n"
-        f"UserID : {user_id}\n\n"
-        f"🔗 Rejoins le canal officiel pour assistance : [Clique ici]({CANAL_LIEN})"
-    )
-    await message.answer(user_recap, parse_mode="Markdown")
-
-    # 🔹 Récapitulatif admin en PV
-    admin_recap = (
-        f"🎯 Nouvelle demande #{demande_num}\n"
-        f"Bookmaker : {info['bookmaker']}\n"
-        f"ID joueur : {info['id_joueur']}\n"
-        f"Nom : {message.from_user.full_name}\n"
-        f"Pseudo : @{message.from_user.username or 'aucun'}\n"
-        f"UserID : {user_id}"
-    )
-    await bot.send_message(ADMIN_ID, admin_recap)
-
-# === VALIDATION PAR ADMIN ===
-@dp.message(Command("accepter"))
-async def accepter_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+# === ADMIN COMMANDS ===
+@bot.message_handler(commands=['valider'])
+def valider(message):
+    if message.from_user.id not in ADMIN_IDS:
         return
     try:
-        _, demande_num, code = message.text.split()
+        demande_id = int(message.text.split()[1])
+        with db_lock:
+            c.execute("UPDATE demandes SET statut='Validée' WHERE id=?", (demande_id,))
+            conn.commit()
+        bot.send_message(message.chat.id, f"✅ Demande {demande_id} validée.")
     except:
-        await message.reply("Usage: /accepter <num_demande> <code à 4 chiffres>")
-        return
-    if demande_num not in data["pending"]:
-        await message.reply("❌ Demande introuvable.")
-        return
-    info = data["pending"][demande_num]
-    uid = info["user_id"]
+        bot.send_message(message.chat.id, "Usage: /valider <id>")
 
-    data["users"][code] = {
-        "user_id": uid,
-        "pseudo": f"@{message.from_user.username}" if message.from_user.username else "",
-        "bookmaker": info["bookmaker"],
-        "id_joueur": info["id_joueur"],
-        "solde": 0,
-        "valide": True
-    }
-    del data["pending"][demande_num]
-    save_data(data)
-
-    await bot.send_message(
-        int(uid),
-        f"✅ Votre compte a été validé !\n"
-        f"Votre code *MonCacheBar* est : `{code}`\n\n"
-        f"👉 Utilisez le bouton 'MonCacheBar' pour consulter vos gains.",
-        parse_mode="Markdown"
-    )
-
-    await message.reply(f"Demande #{demande_num} validée avec le code {code}")
-    await message.answer("👑 Menu Admin", reply_markup=get_admin_menu())
-
-# === AJOUT CASHBACK ===
-@dp.message(Command("ajouter"))
-async def ajouter_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+@bot.message_handler(commands=['rejeter'])
+def rejeter(message):
+    if message.from_user.id not in ADMIN_IDS:
         return
     try:
-        _, code, montant = message.text.split()
-        montant = int(montant)
+        demande_id = int(message.text.split()[1])
+        with db_lock:
+            c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
+            conn.commit()
+        bot.send_message(message.chat.id, f"❌ Demande {demande_id} rejetée.")
     except:
-        await message.reply("Usage: /ajouter <code> <montant>")
-        return
+        bot.send_message(message.chat.id, "Usage: /rejeter <id>")
 
-    if code in data["users"]:
-        data["users"][code]["solde"] += montant
-        save_data(data)
-        uid = int(data["users"][code]["user_id"])
-        await bot.send_message(uid, f"💰 Nouveau cashback ajouté : {montant} FCFA\nSolde total : {data['users'][code]['solde']} FCFA")
-        await message.reply(f"✅ Ajouté {montant} FCFA au code {code}")
-    else:
-        await message.reply("❌ Code introuvable.")
+# === WEBHOOK FLASK ===
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "", 200
 
-# === MONCACHEBAR ===
-@dp.message(lambda m: m.text == "MonCacheBar")
-async def moncachebar_cmd(message: types.Message):
-    await message.answer("🔑 Entrez votre code MonCacheBar (4 chiffres).")
-
-@dp.message(lambda m: m.text.isdigit() and len(m.text) == 4)
-async def check_code(message: types.Message):
-    code = message.text
-    if code in data["users"]:
-        solde = data["users"][code]["solde"]
-        await message.answer(f"💰 Solde MonCacheBar : {solde} FCFA")
-    else:
-        await message.answer("❌ Code invalide ou non encore validé.")
-
-# === DÉMARRAGE BOT EN THREAD ===
-async def start_bot():
-    await dp.start_polling(bot)
-
-def run_bot():
-    asyncio.run(start_bot())
-
+# === LAUNCH ===
 if __name__ == "__main__":
-    # Lancer le bot Telegram dans un thread
-    threading.Thread(target=run_bot).start()
-    # Lancer Flask pour keep-alive
-    app.run(host="0.0.0.0", port=5000)
+    bot.remove_webhook()
+    PORT = int(os.environ.get("PORT", 5000))
+    SERVICE_URL = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}"
+    bot.set_webhook(url=f"{SERVICE_URL}/{TOKEN}")
+    app.run(host="0.0.0.0", port=PORT)
