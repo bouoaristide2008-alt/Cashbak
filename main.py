@@ -1,165 +1,105 @@
-import os
 import telebot
 from telebot import types
-import sqlite3
-import random
-import string
-import threading
-from flask import Flask, request
 
-# ==============================
-# CONFIG
-# ==============================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI")
+# Mets ton token ici
+BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-# Admins
-ADMIN_IDS = [6357925694]  # Ton ID ici
+# Ton ID Telegram admin (remplace par le tien)
+ADMIN_ID = 6357925694
 
-# Base de données
-conn = sqlite3.connect("cashback.db", check_same_thread=False)
-c = conn.cursor()
-c.execute("""CREATE TABLE IF NOT EXISTS demandes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                bookmaker TEXT,
-                identifiant TEXT,
-                statut TEXT DEFAULT 'En attente',
-                code_cashback TEXT)""")
-conn.commit()
+# ID du canal où toutes les demandes doivent aller
+CHANNEL_ID = -1002845193051  # Remplace par ton canal
 
-db_lock = threading.Lock()
+# Dictionnaire temporaire pour stocker les étapes utilisateur
+user_data = {}
 
-# ==============================
-# MENU PRINCIPAL
-# ==============================
+# ------------------ START ------------------
 @bot.message_handler(commands=["start"])
 def start(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("📌 1xBet")
+    btn2 = types.KeyboardButton("📌 Melbet")
+    btn3 = types.KeyboardButton("📌 Betwinner")
+    markup.add(btn1, btn2, btn3)
+
+    bot.send_message(
+        message.chat.id,
+        f"👋 Bienvenue <b>{message.from_user.first_name}</b> !\n\n"
+        "Choisis ton bookmaker pour continuer :",
+        reply_markup=markup
+    )
+    user_data[message.chat.id] = {}
+
+# ------------------ CHOIX BOOKMAKER ------------------
+@bot.message_handler(func=lambda msg: msg.text in ["📌 1xBet", "📌 Melbet", "📌 Betwinner"])
+def get_bookmaker(message):
+    user_data[message.chat.id]["bookmaker"] = message.text
+    bot.send_message(message.chat.id, "🔑 Envoie maintenant ton ID joueur :")
+    bot.register_next_step_handler(message, save_user_id)
+
+def save_user_id(message):
+    user_data[message.chat.id]["user_id"] = message.text
+
+    bookmaker = user_data[message.chat.id]["bookmaker"]
+    user_id = user_data[message.chat.id]["user_id"]
+
+    text = (
+        f"📩 Nouvelle demande de cashback\n\n"
+        f"👤 Utilisateur : {message.from_user.first_name} (@{message.from_user.username})\n"
+        f"🏦 Bookmaker : {bookmaker}\n"
+        f"🆔 ID Joueur : {user_id}\n"
+        f"✅ En attente de validation par l’administrateur."
+    )
+
+    # Envoyer à l’admin
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📌 Faire une demande", callback_data="faire_demande"))
-    markup.add(types.InlineKeyboardButton("💰 Mon cashback", callback_data="cashback"))
-    markup.add(types.InlineKeyboardButton("🆘 Support", callback_data="support"))
-    markup.add(types.InlineKeyboardButton("❓ Aide", callback_data="aide"))
-    bot.send_message(message.chat.id, "👋 Bienvenue sur le bot Cashback.\nQue voulez-vous faire ?", reply_markup=markup)
+    btn1 = types.InlineKeyboardButton("✅ Accepter", callback_data=f"accept_{message.chat.id}")
+    btn2 = types.InlineKeyboardButton("❌ Refuser", callback_data=f"reject_{message.chat.id}")
+    markup.add(btn1, btn2)
 
-# ==============================
-# CALLBACKS
-# ==============================
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    # ==== Faire une demande ====
-    if call.data == "faire_demande":
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("1xBet", callback_data="bookmaker_1xBet"))
-        markup.add(types.InlineKeyboardButton("Betwinner", callback_data="bookmaker_Betwinner"))
-        markup.add(types.InlineKeyboardButton("1Win", callback_data="bookmaker_1Win"))
-        bot.send_message(call.message.chat.id, "📌 Choisissez votre bookmaker :", reply_markup=markup)
+    bot.send_message(ADMIN_ID, text, reply_markup=markup)
 
-    # ==== Choix bookmaker ====
-    elif call.data.startswith("bookmaker_"):
-        bookmaker = call.data.split("_")[1]
-        bot.send_message(call.message.chat.id, f"👉 Entrez votre ID {bookmaker} :")
-        bot.register_next_step_handler(call.message, save_demande, call.from_user.id, bookmaker)
+    # Envoyer dans le canal
+    bot.send_message(CHANNEL_ID, text)
 
-    # ==== Mon cashback ====
-    elif call.data == "cashback":
-        show_cashback(call.message)
+    bot.send_message(message.chat.id, "⏳ Votre demande a été envoyée, veuillez patienter.")
 
-    # ==== Support ====
-    elif call.data == "support":
-        bot.send_message(call.message.chat.id, "🆘 Contacte le support ici : @managerxxten")
+# ------------------ BOUTONS ADMIN ------------------
+@bot.callback_query_handler(func=lambda call: call.data.startswith("accept_") or call.data.startswith("reject_"))
+def handle_admin_action(call):
+    user_chat_id = int(call.data.split("_")[1])
 
-    # ==== Aide ====
-    elif call.data == "aide":
-        bot.send_message(call.message.chat.id,
-                         "📖 Guide Cashback :\n"
-                         "1️⃣ Choisissez un bookmaker\n"
-                         "2️⃣ Saisissez votre identifiant\n"
-                         "3️⃣ Attendez la validation de l'admin\n"
-                         "4️⃣ Recevez votre code cashback 🎁")
+    if call.data.startswith("accept_"):
+        bot.send_message(user_chat_id, "🎉 Votre demande a été <b>ACCEPTÉE</b> ✅")
+        bot.send_message(call.message.chat.id, "👍 Demande acceptée avec succès.")
+    else:
+        bot.send_message(user_chat_id, "❌ Votre demande a été <b>REFUSÉE</b>.")
+        bot.send_message(call.message.chat.id, "👎 Demande refusée.")
 
-    # ==== ADMIN : Accepter ====
-    elif call.data.startswith("accepter_") and call.from_user.id in ADMIN_IDS:
-        demande_id = int(call.data.split("_")[1])
-        code_cash = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        with db_lock:
-            c.execute("UPDATE demandes SET statut='Acceptée', code_cashback=? WHERE id=?", (code_cash, demande_id))
-            conn.commit()
-            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
-            row = c.fetchone()
-        if row:
-            bot.send_message(row[0], f"✅ Votre demande a été acceptée !\n🎁 Code cashback : <b>{code_cash}</b>")
-        bot.edit_message_text("✅ Demande acceptée", call.message.chat.id, call.message.message_id)
+# ------------------ MENU SUPPORT ------------------
+@bot.message_handler(commands=["menu"])
+def menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton("💰 Mon Cashback")
+    btn2 = types.KeyboardButton("📞 Support")
+    btn3 = types.KeyboardButton("ℹ️ Aide")
+    markup.add(btn1, btn2, btn3)
+    bot.send_message(message.chat.id, "📍 Menu principal :", reply_markup=markup)
 
-    # ==== ADMIN : Rejeter ====
-    elif call.data.startswith("rejeter_") and call.from_user.id in ADMIN_IDS:
-        demande_id = int(call.data.split("_")[1])
-        with db_lock:
-            c.execute("UPDATE demandes SET statut='Rejetée' WHERE id=?", (demande_id,))
-            conn.commit()
-            c.execute("SELECT user_id FROM demandes WHERE id=?", (demande_id,))
-            row = c.fetchone()
-        if row:
-            bot.send_message(row[0], "❌ Votre demande a été rejetée.")
-        bot.edit_message_text("❌ Demande rejetée", call.message.chat.id, call.message.message_id)
+@bot.message_handler(func=lambda msg: msg.text == "📞 Support")
+def support(message):
+    bot.send_message(message.chat.id, "📩 Contactez l’admin ici : @TonUsername")
 
-# ==============================
-# SAUVEGARDE DEMANDE
-# ==============================
-def save_demande(message, user_id, bookmaker):
-    identifiant = message.text.strip()
-    with db_lock:
-        c.execute("INSERT INTO demandes (user_id, bookmaker, identifiant) VALUES (?, ?, ?)",
-                  (user_id, bookmaker, identifiant))
-        conn.commit()
-        demande_id = c.lastrowid
+@bot.message_handler(func=lambda msg: msg.text == "ℹ️ Aide")
+def aide(message):
+    bot.send_message(message.chat.id, "ℹ️ Pour recevoir ton cashback, inscris-toi avec le code promo B-C-A-F.\n"
+                                      "Ensuite, envoie ton ID pour validation.")
 
-    # Notif admin
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("✅ Accepter", callback_data=f"accepter_{demande_id}"),
-               types.InlineKeyboardButton("❌ Rejeter", callback_data=f"rejeter_{demande_id}"))
-    for admin_id in ADMIN_IDS:
-        bot.send_message(admin_id, f"📩 Nouvelle demande :\n"
-                                   f"👤 ID User : {user_id}\n"
-                                   f"🏦 Bookmaker : {bookmaker}\n"
-                                   f"🆔 Identifiant : {identifiant}", reply_markup=markup)
+@bot.message_handler(func=lambda msg: msg.text == "💰 Mon Cashback")
+def cashback(message):
+    bot.send_message(message.chat.id, "💸 Ton solde cashback sera mis à jour par l’administrateur.")
 
-    bot.send_message(message.chat.id, "📌 Votre demande a été envoyée ✅\nVeuillez attendre la validation de l'admin.")
-
-# ==============================
-# AFFICHER CASHBACK
-# ==============================
-def show_cashback(message):
-    with db_lock:
-        c.execute("SELECT bookmaker, identifiant, statut, code_cashback FROM demandes WHERE user_id=?", (message.chat.id,))
-        rows = c.fetchall()
-    if not rows:
-        bot.send_message(message.chat.id, "⚠️ Vous n'avez pas encore fait de demande.")
-        return
-
-    txt = "💰 Historique de vos demandes :\n\n"
-    for bookmaker, identifiant, statut, code in rows:
-        txt += f"🏦 {bookmaker}\n🆔 {identifiant}\n📌 Statut : {statut}\n"
-        if code:
-            txt += f"🎁 Code : {code}\n"
-        txt += "─────────────\n"
-    bot.send_message(message.chat.id, txt)
-
-# ==============================
-# FLASK + WEBHOOK (Render)
-# ==============================
-app = Flask(__name__)
-
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.stream.read().decode("UTF-8")
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "OK", 200
-
-@app.route("/")
-def index():
-    return "Bot en ligne !"
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))   
+# ------------------ LANCEMENT ------------------
+print("✅ Bot Cashback lancé...")
+bot.infinity_polling()
