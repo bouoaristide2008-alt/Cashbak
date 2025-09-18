@@ -4,6 +4,7 @@ from telebot import types
 # Mets ton token ici
 BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+bot.remove_webhook()
 
 # Ton ID Telegram admin (remplace par le tien)
 ADMIN_ID = 6357925694
