@@ -6,7 +6,7 @@ TOKEN = "8277555619:AAHB4cx7uPJm9jlEej_e2UvHfUCkQI56lpM"
 ADMIN_ID = 6357925694
 CHANNEL_ID = -1002845193051
 GROUP_ID = -1002365829730
-GROUP_LINK = "https://t.me/kingpronosbs https://t.me/lionel_officiel1"
+GROUP_LINK = "https://t.me/kingpronosbs"
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -109,8 +109,9 @@ def get_user_id(message, bookmaker):
         f"Bookmaker : {bookmaker}\n"
         f"ID : {bookmaker_id}"
     )
-    bot.send_message(CHANNEL_ID, recap_msg)
-    bot.send_message(GROUP_ID, recap_msg)
+    # ✅ Ajout des boutons admin
+    bot.send_message(CHANNEL_ID, recap_msg, reply_markup=admin_menu())
+    bot.send_message(GROUP_ID, recap_msg, reply_markup=admin_menu())
 
 # ================== ADMIN AJOUT MONTANT ==================
 @bot.message_handler(commands=['ajouter_montant'])
