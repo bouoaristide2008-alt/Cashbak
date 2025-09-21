@@ -6,7 +6,7 @@ TOKEN = "8277555619:AAHB4cx7uPJm9jlEej_e2UvHfUCkQI56lpM"
 ADMIN_ID = 6357925694
 CHANNEL_ID = -1002845193051
 GROUP_ID = -1002365829730
-GROUP_LINK = "https://t.me/kingpronosbs"
+GROUP_LINK = "https://t.me/kingpronosbs https://t.me/lionel_officiel1"
 
 bot = telebot.TeleBot(TOKEN)
 
