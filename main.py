@@ -1,106 +1,134 @@
 import telebot
-from telebot import types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Mets ton token ici
-BOT_TOKEN = "8358605759:AAFUBRTk7juCFO6qPIA0QDfosp2ngWNFzJI"
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-bot.remove_webhook()
-
-# Ton ID Telegram admin (remplace par le tien)
+# ================== CONFIG ==================
+TOKEN = "8277555619:AAHB4cx7uPJm9jlEej_e2UvHfUCkQI56lpM"
 ADMIN_ID = 6357925694
+CHANNEL_ID = -1002845193051
+GROUP_ID = -1002365829730
+GROUP_LINK = "https://t.me/kingpronosbs"
 
-# ID du canal où toutes les demandes doivent aller
-CHANNEL_ID = -1002845193051  # Remplace par ton canal
+bot = telebot.TeleBot(TOKEN)
 
-# Dictionnaire temporaire pour stocker les étapes utilisateur
-user_data = {}
+# ================== DONNÉES ==================
+users_data = {}
+pending_requests = []
 
-# ------------------ START ------------------
-@bot.message_handler(commands=["start"])
+# ================== MENUS ==================
+def main_menu():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("💰 Cashback", callback_data="cashback"))
+    markup.add(InlineKeyboardButton("🆘 Support", callback_data="support"))
+    return markup
+
+def bookmaker_menu():
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("1️⃣ 1xBet", callback_data="bookmaker_1xbet"),
+        InlineKeyboardButton("2️⃣ Melbet", callback_data="bookmaker_melbet"),
+        InlineKeyboardButton("3️⃣ BetWinner", callback_data="bookmaker_betwinner")
+    )
+    return markup
+
+def admin_menu():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Accepter", callback_data="admin_accept"))
+    markup.add(InlineKeyboardButton("❌ Rejeter", callback_data="admin_reject"))
+    return markup
+
+# ================== START ==================
+@bot.message_handler(commands=['start'])
 def start(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("📌 1xBet")
-    btn2 = types.KeyboardButton("📌 Melbet")
-    btn3 = types.KeyboardButton("📌 Betwinner")
-    markup.add(btn1, btn2, btn3)
-
-    bot.send_message(
-        message.chat.id,
-        f"👋 Bienvenue <b>{message.from_user.first_name}</b> !\n\n"
-        "Choisis ton bookmaker pour continuer :",
-        reply_markup=markup
+    welcome_msg = (
+        f"👋 Bonjour {message.from_user.first_name} !\n\n"
+        "Vous pouvez recevoir **15% de cashback** sur vos pertes sur 1xBet, Melbet et BetWinner "
+        "en utilisant le code promo **BCAF**.\n\n"
+        "Quel bookmaker utilisez-vous ?"
     )
-    user_data[message.chat.id] = {}
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=bookmaker_menu())
 
-# ------------------ CHOIX BOOKMAKER ------------------
-@bot.message_handler(func=lambda msg: msg.text in ["📌 1xBet", "📌 Melbet", "📌 Betwinner"])
-def get_bookmaker(message):
-    user_data[message.chat.id]["bookmaker"] = message.text
-    bot.send_message(message.chat.id, "🔑 Envoie maintenant ton ID joueur :")
-    bot.register_next_step_handler(message, save_user_id)
+# ================== CALLBACK ==================
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    username = call.from_user.username or call.from_user.first_name
 
-def save_user_id(message):
-    user_data[message.chat.id]["user_id"] = message.text
+    if call.data.startswith("bookmaker_"):
+        bookmaker = call.data.split("_")[1]
+        bot.send_message(call.message.chat.id, f"📌 Entrez votre ID {bookmaker} :")
+        bot.register_next_step_handler(call.message, get_user_id, bookmaker)
 
-    bookmaker = user_data[message.chat.id]["bookmaker"]
-    user_id = user_data[message.chat.id]["user_id"]
+    elif call.data == "cashback":
+        if user_id in users_data and users_data[user_id]['statut'] == "accepté":
+            montant = users_data[user_id].get('montant', 0)
+            bot.send_message(call.message.chat.id, f"💰 Votre cashback : {montant} CFA")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Vous n'avez pas de cashback disponible.")
 
-    text = (
-        f"📩 Nouvelle demande de cashback\n\n"
-        f"👤 Utilisateur : {message.from_user.first_name} (@{message.from_user.username})\n"
-        f"🏦 Bookmaker : {bookmaker}\n"
-        f"🆔 ID Joueur : {user_id}\n"
-        f"✅ En attente de validation par l’administrateur."
+    elif call.data == "support":
+        bot.send_message(call.message.chat.id, f"🆘 Contactez l'admin : @{bot.get_me().username}")
+
+    elif call.data.startswith("admin_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "⛔ Vous n'êtes pas admin !")
+            return
+        action = call.data.split("_")[1]
+        if not pending_requests:
+            bot.answer_callback_query(call.id, "📭 Pas de demandes en attente.")
+            return
+        target_id = pending_requests.pop(0)
+        if action == "accept":
+            users_data[target_id]['statut'] = "accepté"
+            bot.send_message(target_id, "✅ Votre demande a été acceptée ! Vous pouvez maintenant voir votre cashback et contacter le support.")
+            bot.answer_callback_query(call.id, "✅ Demande acceptée !")
+        else:
+            users_data[target_id]['statut'] = "rejeté"
+            bot.send_message(target_id, "❌ Votre demande a été rejetée.")
+            bot.answer_callback_query(call.id, "❌ Demande rejetée !")
+
+# ================== GET USER ID ==================
+def get_user_id(message, bookmaker):
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    bookmaker_id = message.text.strip()
+
+    users_data[user_id] = {
+        'username': username,
+        'bookmaker': bookmaker,
+        'bookmaker_id': bookmaker_id,
+        'statut': 'en attente',
+        'montant': 0
+    }
+    pending_requests.append(user_id)
+
+    bot.send_message(message.chat.id, f"📩 Votre demande est en cours de vérification.\nVeuillez rejoindre notre groupe : {GROUP_LINK}")
+
+    recap_msg = (
+        f"📩 Nouvelle demande de cashback !\n"
+        f"Utilisateur : @{username}\n"
+        f"Bookmaker : {bookmaker}\n"
+        f"ID : {bookmaker_id}"
     )
+    bot.send_message(CHANNEL_ID, recap_msg)
+    bot.send_message(GROUP_ID, recap_msg)
 
-    # Envoyer à l’admin
-    markup = types.InlineKeyboardMarkup()
-    btn1 = types.InlineKeyboardButton("✅ Accepter", callback_data=f"accept_{message.chat.id}")
-    btn2 = types.InlineKeyboardButton("❌ Refuser", callback_data=f"reject_{message.chat.id}")
-    markup.add(btn1, btn2)
+# ================== ADMIN AJOUT MONTANT ==================
+@bot.message_handler(commands=['ajouter_montant'])
+def add_montant(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "⛔ Pas autorisé !")
+        return
+    try:
+        _, target_id, montant = message.text.split()
+        target_id = int(target_id)
+        montant = int(montant)
+        if target_id in users_data:
+            users_data[target_id]['montant'] = montant
+            bot.send_message(message.chat.id, f"✅ Montant {montant} CFA ajouté à @{users_data[target_id]['username']}")
+        else:
+            bot.send_message(message.chat.id, "❌ Utilisateur introuvable.")
+    except:
+        bot.send_message(message.chat.id, "Usage: /ajouter_montant <user_id> <montant>")
 
-    bot.send_message(ADMIN_ID, text, reply_markup=markup)
-
-    # Envoyer dans le canal
-    bot.send_message(CHANNEL_ID, text)
-
-    bot.send_message(message.chat.id, "⏳ Votre demande a été envoyée, veuillez patienter.")
-
-# ------------------ BOUTONS ADMIN ------------------
-@bot.callback_query_handler(func=lambda call: call.data.startswith("accept_") or call.data.startswith("reject_"))
-def handle_admin_action(call):
-    user_chat_id = int(call.data.split("_")[1])
-
-    if call.data.startswith("accept_"):
-        bot.send_message(user_chat_id, "🎉 Votre demande a été <b>ACCEPTÉE</b> ✅")
-        bot.send_message(call.message.chat.id, "👍 Demande acceptée avec succès.")
-    else:
-        bot.send_message(user_chat_id, "❌ Votre demande a été <b>REFUSÉE</b>.")
-        bot.send_message(call.message.chat.id, "👎 Demande refusée.")
-
-# ------------------ MENU SUPPORT ------------------
-@bot.message_handler(commands=["menu"])
-def menu(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("💰 Mon Cashback")
-    btn2 = types.KeyboardButton("📞 Support")
-    btn3 = types.KeyboardButton("ℹ️ Aide")
-    markup.add(btn1, btn2, btn3)
-    bot.send_message(message.chat.id, "📍 Menu principal :", reply_markup=markup)
-
-@bot.message_handler(func=lambda msg: msg.text == "📞 Support")
-def support(message):
-    bot.send_message(message.chat.id, "📩 Contactez l’admin ici : @TonUsername")
-
-@bot.message_handler(func=lambda msg: msg.text == "ℹ️ Aide")
-def aide(message):
-    bot.send_message(message.chat.id, "ℹ️ Pour recevoir ton cashback, inscris-toi avec le code promo B-C-A-F.\n"
-                                      "Ensuite, envoie ton ID pour validation.")
-
-@bot.message_handler(func=lambda msg: msg.text == "💰 Mon Cashback")
-def cashback(message):
-    bot.send_message(message.chat.id, "💸 Ton solde cashback sera mis à jour par l’administrateur.")
-
-# ------------------ LANCEMENT ------------------
-print("✅ Bot Cashback lancé...")
+# ================== LANCEMENT ==================
 bot.infinity_polling()
