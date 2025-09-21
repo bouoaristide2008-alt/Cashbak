@@ -7,7 +7,7 @@ ADMIN_ID = 6357925694
 CHANNEL_ID = -1002845193051
 GROUP_ID = -1002365829730
 GROUP_LINK = "https://t.me/kingpronosbs"
-AFFILIATE_LINK = "https://1xbet.com/fr?whn=BCAF"
+AFFILIATE_LINK = "https://reffpa.com/L?tag=d_3684565m_97c_&site=3684565&ad=97&r=bienvenuaridtlrbj"
 
 bot = telebot.TeleBot(TOKEN)
 
