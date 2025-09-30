@@ -7,7 +7,8 @@ TOKEN = "8277555619:AAHB4cx7uPJm9jlEej_e2UvHfUCkQI56lpM"
 ADMIN_ID = 6357925694
 CHANNEL_ID = -1002845193051
 GROUP_ID = -1002365829730
-GROUP_LINK = "https://t.me/kingpronosbs"
+GROUP_LINK = "https://t.me/kingpronosbs
+https://t.me/lionel_officiel1"
 AFFILIATE_LINK = "https://reffpa.com/L?tag=d_3684565m_97c_&site=3684565&ad=97&r=bienvenuaridtlrbj"
 
 bot = telebot.TeleBot(TOKEN)
@@ -41,11 +42,11 @@ def start(message):
     welcome_msg = (
         f"👋 Bonjour **{message.from_user.first_name}** !\n\n"
         "Vous pouvez récupérer **15% de cashback** sur vos pertes sur 1xBet, Melbet et BetWinner "
-        "en utilisant le code promo **BCAF**.\n\n"
+        "en utilisant le code promo BCAF ou KANE225.\n\n"
         "Inscrivez-vous maintenant et commencez à récupérer vos pertes !"
     )
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🚀 S’inscrire avec BCAF", url=AFFILIATE_LINK))
+    markup.add(InlineKeyboardButton("🚀 S’inscrire sur 1xbet", url=AFFILIATE_LINK))
     bot.send_message(message.chat.id, welcome_msg, reply_markup=markup, parse_mode="Markdown")
     bot.send_message(message.chat.id, "Quel bookmaker utilisez-vous ?", reply_markup=bookmaker_menu())
 
